@@ -32,6 +32,7 @@ const I = {
   documents: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
   downloads: '<path d="M12 3v12M7 10l5 5 5-5M4 21h16"/>',
   large: '<path d="M4 20h16M7 20v-6M12 20V5M17 20v-10"/>',
+  orphans: '<path d="M3 7a2 2 0 0 1 2-2h4l2 2h8a2 2 0 0 1 2 2v9a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2z"/><path d="M10 12l4 4M14 12l-4 4"/>',
   dupes: '<rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/>',
   smart: '<path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9z"/><path d="M19 15l.8 2.2L22 18l-2.2.8L19 21l-.8-2.2L16 18l2.2-.8z"/>',
   x: '<path d="M6 6l12 12M18 6L6 18"/>', check: '<path d="M5 12l5 5L20 7"/>', play: '<path d="M7 4l13 8-13 8z"/>',
@@ -43,7 +44,8 @@ const svg = (n) => `<svg viewBox="0 0 24 24">${I[n]}</svg>`;
 
 const CATS = {
   smart: { t: 'Smart Clean', d: 'Best safe picks from everything. Swipe through, done.' },
-  apps: { t: 'Apps', d: 'Uninstall programs + Store apps and wipe every leftover.', drive: 1 },
+  apps: { t: 'Apps', d: 'Programs, Store apps, Steam games and portable apps. Wipes every leftover.' },
+  orphans: { t: 'Old app leftovers', d: 'Folders left by apps you already removed.' },
   bloat: { t: 'Bloatware', d: 'Junk apps Windows came with.' },
   tweaks: { t: 'Debloat Windows', d: 'Kill ads, tracking, Copilot, Bing and more.' },
   opt: { t: 'Optimize', d: 'FPS, latency and speed boosts. Swipe right to turn on.' },
@@ -135,7 +137,7 @@ async function home() {
       ${tile('smart', 'hero-tile')}
     </div>
     <div class="section-label">Programs & Windows</div>
-    <div class="tiles">${['apps', 'bloat', 'tweaks'].map((k) => tile(k)).join('')}</div>
+    <div class="tiles">${['apps', 'orphans', 'bloat', 'tweaks'].map((k) => tile(k)).join('')}</div>
     <div class="section-label">Speed</div>
     <div class="tiles">${['opt', 'startup'].map((k) => tile(k)).join('')}</div>
     <div class="section-label">Files ${drive !== info.sysDrive ? `<span class="badge info">scanning whole ${drive.slice(0, 2)} drive</span>` : ''}</div>
@@ -293,6 +295,7 @@ function counter() {
 }
 const IMG = /\.(jpe?g|png|gif|webp|bmp)$/i, VID = /\.(mp4|webm|mov|m4v|mkv)$/i;
 function media(it, top) {
+  if (it.dir) return `<div class="letter">${svg('orphans')}</div>`;
   if (it.kind === 'file') {
     if (IMG.test(it.name)) return `<img class="full" src="${esc(it.url)}" draggable="false" decoding="async">`;
     // video: only first frame until you hover = no lag on big files
@@ -311,8 +314,13 @@ function infoHtml(it) {
   const b = (cls, t) => (badges += `<span class="badge ${cls}">${esc(t)}</span>`);
   if (it.kind === 'app') {
     if (it.publisher) m.push(it.publisher); if (it.size) m.push(fmt(it.size)); if (it.date) m.push('installed ' + ago(it.date));
-    if (it.store) b('info', 'Store app'); if (it.broken) b('warn', 'Broken · force remove'); else if (it.silent) b('ok', 'No popups');
+    if (it.store) b('info', 'Store app'); if (it.portable) b('info', 'Portable app'); if (/steam:\/\//i.test(it.uninstall || '')) b('info', 'Steam game');
+    if (it.broken) b('warn', 'Broken · force remove'); else if (it.silent) b('ok', 'No popups');
     if (it.warn) b('warn', '⚠ Other apps may need this');
+  } else if (it.orphan) {
+    m.push(fmt(it.size), `${it.count.toLocaleString()} files`, 'last used ' + ago(it.mtime));
+    desc = `<div class="path">${esc(it.path)}</div><div class="desc">No installed app uses this folder anymore. Not sure what it is? Swipe right.</div>`;
+    b('warn', 'Check the name');
   } else if (it.kind === 'file') {
     m.push(fmt(it.size), 'changed ' + ago(it.mtime));
     desc = `<div class="path">${esc(it.original ? 'Copy of: ' + it.original : it.folder)}</div>`;
@@ -502,7 +510,7 @@ async function run(items, opts) {
 
 function leftoversScreen(left, res) {
   screen = 'leftovers';
-  const label = { file: 'Folder / file', reg: 'Registry key (backed up first)', run: 'Startup entry', task: 'Scheduled task', svc: 'Service' };
+  const label = { file: 'Folder / file', val: 'Registry value', reg: 'Registry key (backed up first)', run: 'Startup entry', task: 'Scheduled task', svc: 'Service' };
   const rows = left.map((l, i) => `<label class="row"><input type="checkbox" data-i="${i}" ${l.sure ? 'checked' : ''}>
     <span class="n">${esc(l.path)}<small>${label[l.type]} · from ${esc(l.app)}${l.sure ? '' : ' · maybe, check it'}</small></span><span class="s">${l.size ? fmt(l.size) : ''}</span></label>`).join('');
   view.innerHTML = `<section class="screen narrow"><h1>Leftovers found</h1>

@@ -181,7 +181,7 @@ async function listApps() {
       if (!icon || !fs.existsSync(icon)) icon = exe && fs.existsSync(exe) ? exe : '';
       return {
         kind: 'app', id: r.PSPath, title: r.DisplayName, version: r.DisplayVersion || '', publisher: r.Publisher || '',
-        location: r.InstallLocation || '', uninstall: r.UninstallString, quiet: r.QuietUninstallString || '',
+        location: r.InstallLocation || guessLoc(icon) || guessLoc(exe), locGuess: !r.InstallLocation, uninstall: r.UninstallString, quiet: r.QuietUninstallString || '',
         size: (r.EstimatedSize || 0) * 1024, date: r.InstallDate || '', icon, broken, silent,
         warn: WARN.some((w) => w.test(r.DisplayName)),
       };
@@ -202,7 +202,94 @@ async function listApps() {
       location: s.Loc || '', size: 0, date: s.Date || '', logo: s.Logo ? pathToFileURL(s.Logo).href : '', silent: true, warn: false });
   }
   for (const a of apps.filter((a) => a.store && a.location)) a.size = (await dirSize(a.location)).size;
+  apps.push(...(await listPortable(apps)));
   return apps;
+}
+// no InstallLocation in the registry? use the folder of its icon / uninstaller if it sits in an app folder
+function guessLoc(file) {
+  if (!file) return '';
+  const d = path.dirname(file), l = d.toLowerCase();
+  const roots = [PF, PF86, path.join(LOCAL, 'Programs'), LOCAL, ROAM].map((x) => x.toLowerCase());
+  if (!roots.some((r) => l.startsWith(r + '\\')) || roots.includes(l) || /\\(common files|package cache|installer|microsoft)(\\|$)/i.test(l)) return '';
+  return d;
+}
+
+// ---------- portable apps (no installer, so Windows doesn't list them) ----------
+const NOT_MAIN_EXE = /setup|install|unins|update|redist|crash|helper|report|elevat|vc_|dxweb|launcher_stub/i;
+async function listPortable(installed) {
+  const taken = installed.map((a) => (a.location || '').toLowerCase()).filter((l) => l.length > 3);
+  const out = [];
+  const roots = ['downloads', 'desktop', 'documents'].map((k) => app.getPath(k));
+  for (const root of roots) {
+    const stack = [[root, 0]];
+    while (stack.length) {
+      const [dir, depth] = stack.pop();
+      let ents; try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
+      const exes = ents.filter((e) => e.isFile() && /\.exe$/i.test(e.name) && !NOT_MAIN_EXE.test(e.name));
+      const appish = depth > 0 && exes.length && (ents.some((e) => e.isFile() && /\.(dll|pak|asar|ini|dat)$/i.test(e.name)) || ents.some((e) => e.isDirectory() && /^(resources|locales|app|bin|data|lib)$/i.test(e.name)));
+      if (appish && !taken.some((t) => dir.toLowerCase().startsWith(t))) {
+        const name = path.basename(dir);
+        const main = exes.find((e) => norm(e.name.replace(/\.exe$/i, '')).startsWith(norm(name).slice(0, 4))) || exes.sort((a, b) => a.name.length - b.name.length)[0];
+        const exe = path.join(dir, main.name);
+        let mtime = 0; try { mtime = (await fsp.stat(exe)).mtimeMs; } catch {}
+        out.push({ kind: 'app', portable: true, id: 'portable:' + dir, title: name.replace(/[-_. ](win(64|32)?|x64|x86|portable|v?\d+([._]\d+)+)\b.*$/i, '') || name,
+          alias: main.name.replace(/\.exe$/i, ''), location: dir, icon: exe, size: (await dirSize(dir)).size, date: mtime ? new Date(mtime).toISOString().slice(0, 10).replace(/-/g, '') : '',
+          publisher: '', silent: true, warn: false });
+        continue; // don't look inside an app folder
+      }
+      if (depth < 3) for (const e of ents) if (e.isDirectory() && !SKIP.has(e.name.toLowerCase()) && !e.name.startsWith('.')) stack.push([path.join(dir, e.name), depth + 1]);
+    }
+  }
+  return out;
+}
+
+// ---------- leftovers from apps that are already gone (removed via Settings, deleted by hand, broken) ----------
+const ORPH_KEEP = new Set(['microsoft', 'packages', 'temp', 'programs', 'comms', 'connecteddevicesplatform', 'd3dscache', 'crashdumps', 'history',
+  'inetcache', 'publishers', 'virtualstore', 'windowsdefender', 'windowsapps', 'commonfiles', 'internetexplorer', 'windowsnt', 'windowsmail',
+  'windowsmediaplayer', 'windowsphotoviewer', 'windowsportabledevices', 'windowssidebar', 'windowspowershell', 'modifiablewindowsapps',
+  'referenceassemblies', 'msbuild', 'dotnet', 'uninstallinformation', 'packagecache', 'ssh', 'usoshared', 'usoprivate', 'softwaredistribution',
+  'applicationdata', 'startmenu', 'templates', 'desktop', 'documents', 'favorites', 'intel', 'amd', 'nvidia', 'nvidiacorporation', 'realtek',
+  'adobe', 'google', 'mozilla', 'apple', 'electron', 'squirreltemp', 'pip', 'npm', 'npmcache', 'nodegyp', 'yarn', 'pnpm', 'cache', 'logs',
+  'regidcommicrosoft', 'peernetworking', 'placeholdertilelogofolder', 'iconcache', 'thumbcache', 'fontcache', 'gamedvr', 'claude', 'anthropic',
+  'windowsterminal', 'powershell', 'chocolatey', 'scoop', 'git', 'github', 'githubdesktop', 'codeium', 'jetbrains', 'vscode', 'code',
+  'steam', 'epicgameslauncher', 'unrealengine', 'unity', 'riotgames', 'battlenet', 'eagames', 'ubisoft', 'gog', 'origin', 'mygames', 'savedgames']);
+async function hasSaves(dir, depth = 0) {
+  let ents; try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { return false; }
+  for (const e of ents) {
+    if (/sav(e|ed|es|egames?|edata)\b|\.sav$|profiles?$/i.test(e.name)) return true;
+    if (e.isDirectory() && depth < 3 && (await hasSaves(path.join(dir, e.name), depth + 1))) return true;
+  }
+  return false;
+}
+async function scanOrphans() {
+  const apps = await listApps();
+  const names = new Set(), locs = [];
+  for (const a of apps) {
+    for (const s of [a.title, a.publisher, a.alias, a.pkg && a.pkg.split('.').pop()]) { const n = norm(s); if (n.length >= 3) names.add(n); }
+    if (a.location) { locs.push(a.location.toLowerCase()); names.add(norm(path.basename(a.location))); }
+  }
+  const running = (await psJson('Get-Process | ? Path | select -Expand Path -Unique | ConvertTo-Json -Compress')).map((p) => String(p).toLowerCase());
+  const used = (n) => [...names].some((x) => x === n || (n.length >= 5 && x.startsWith(n)) || (x.length >= 5 && n.startsWith(x)));
+  const bases = [LOCAL, ROAM, path.join(ROAM, '..', 'LocalLow'), PDATA, PF, PF86];
+  const out = [];
+  for (const b of bases) {
+    let ents; try { ents = await fsp.readdir(b, { withFileTypes: true }); } catch { continue; }
+    for (const e of ents) {
+      if (!e.isDirectory() || e.isSymbolicLink() || /^[.{$_]/.test(e.name)) continue;
+      const full = path.join(b, e.name), low = full.toLowerCase(), n = norm(e.name);
+      if (n.length < 3 || ORPH_KEEP.has(n) || GENERIC.has(n) || used(n)) continue;
+      if (locs.some((l) => l.startsWith(low + '\\') || l === low) || running.some((r) => r.startsWith(low + '\\'))) continue;
+      // touched in the last 45 days = something still uses it
+      let newest = 0;
+      try { newest = (await fsp.stat(full)).mtimeMs; for (const c of (await fsp.readdir(full)).slice(0, 200)) { try { newest = Math.max(newest, (await fsp.stat(path.join(full, c))).mtimeMs); } catch {} } } catch { continue; }
+      if (Date.now() - newest < 45 * DAY) continue;
+      if (/sav(e|ed|es)/i.test(e.name) || (await hasSaves(full))) continue; // game saves: never offer them
+      const { size, count } = await dirSize(full);
+      if (size < 50e3 || !safe(full)) continue;
+      out.push({ kind: 'file', cat: 'orphans', orphan: true, dir: true, id: full, title: e.name, name: e.name, path: full, folder: b, size, count, mtime: newest, url: '' });
+    }
+  }
+  return out.sort((a, b) => b.size - a.size);
 }
 const norm = (s) => String(s || '').toLowerCase().replace(/\(.*?\)/g, '').replace(/\bv?\d+(\.\d+)*\b/g, '')
   .replace(/\b(x64|x86|64-bit|32-bit|version)\b/g, '').replace(/[^a-z0-9]/g, '');
@@ -217,15 +304,16 @@ async function leftovers(a) {
     const k = type + p.toLowerCase();
     if (!found.has(k)) found.set(k, { type, path: p, sure, ...extra });
   };
-  if (a.location && !a.store && fs.existsSync(a.location)) add(a.location, true);
+  if (a.location && !a.store && fs.existsSync(a.location)) add(a.location, !a.locGuess); // guessed folder = you decide
   if (a.store) { // store app data
     for (const d of await fsp.readdir(path.join(LOCAL, 'Packages')).catch(() => [])) if (d.toLowerCase().startsWith(a.pkg.toLowerCase() + '_')) add(path.join(LOCAL, 'Packages', d), true);
   }
   if (nn.length < 3) return [...found.values()];
+  const na = norm(a.alias); // portable apps: exe name too
   const match = (d) => {
     const nd = norm(d);
     if (!nd || GENERIC.has(nd)) return 0;
-    if (nd === nn) return 2;
+    if (nd === nn || (na.length >= 4 && nd === na)) return 2;
     if ((nd.length >= 5 && nn.startsWith(nd)) || (nn.length >= 5 && nd.startsWith(nn))) return 1;
     return 0;
   };
@@ -242,10 +330,10 @@ async function leftovers(a) {
       if (!e.isDirectory() && nameNoExt === e.name) continue; // only shortcuts as files
       const m = match(nameNoExt);
       if (m) add(path.join(b, e.name), m === 2);
-      if (e.isDirectory() && np.length >= 3 && norm(e.name) === np && !GENERIC.has(np)) {
+      if (!m && e.isDirectory() && np.length >= 3 && norm(e.name) === np && !GENERIC.has(np)) { // Publisher\App (folder itself not already picked)
         try {
           const kids = await fsp.readdir(path.join(b, e.name), { withFileTypes: true });
-          for (const c of kids) { const m2 = match(c.name); if (m2) add(path.join(b, e.name, c.name), m2 === 2); }
+          for (const c of kids) { if (!c.isDirectory()) continue; const m2 = match(c.name); if (m2) add(path.join(b, e.name, c.name), m2 === 2); }
         } catch {}
       }
     }
@@ -259,7 +347,7 @@ async function leftovers(a) {
   }
   const loc = (a.location || '').replace(/\\$/, '');
   const extra = await psJson(`$o = @()
-    @(${keys.map(q).join(',')}${a.id && !a.store ? ',' + q(a.id) : ''}) | ? { Test-Path -LiteralPath $_ } | % { $o += [pscustomobject]@{t='reg';p=$_} }
+    @(${keys.map(q).join(',')}${a.id && !a.store && !a.portable ? ',' + q(a.id) : ''}) | ? { Test-Path -LiteralPath $_ } | % { $o += [pscustomobject]@{t='reg';p=$_} }
     $rx = ${q(nn)}; $loc = ${q(loc.toLowerCase())}
     function N($s){ ($s -replace '\\(.*?\\)','' -replace '[^a-zA-Z0-9]','').ToLower() }
     foreach ($k in 'HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\Microsoft\\Windows\\CurrentVersion\\Run','HKLM:\\Software\\WOW6432Node\\Microsoft\\Windows\\CurrentVersion\\Run') {
@@ -268,9 +356,31 @@ async function leftovers(a) {
     Get-ScheduledTask -EA 0 | ? { $_.TaskPath -notlike '\\Microsoft\\*' } | % { $n = N $_.TaskName; $x = "$($_.Actions.Execute)".ToLower()
       if (($rx.Length -ge 4 -and $n.StartsWith($rx)) -or ($loc.Length -gt 6 -and $x.Contains($loc))) { $o += [pscustomobject]@{t='task';p=$_.TaskPath;n=$_.TaskName} } }
     ${isAdmin ? `Get-CimInstance Win32_Service -EA 0 | ? { $loc.Length -gt 6 -and "$($_.PathName)".ToLower().Contains($loc) } | % { $o += [pscustomobject]@{t='svc';p=$_.Name;n=$_.DisplayName} }` : ''}
+    # deep registry hunt: Software\\<App>, Software\\<Publisher>\\<App>, both hives, 32 + 64 bit
+    $np = ${q(GENERIC.has(np) ? '' : np)}
+    foreach ($r in 'HKCU:\\Software','HKLM:\\Software','HKLM:\\Software\\WOW6432Node') {
+      Get-ChildItem $r -EA 0 | % { $n = N $_.PSChildName
+        if ($n -eq $rx) { $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=1} }
+        elseif ($np.Length -ge 3 -and $n -eq $np) { Get-ChildItem $_.PSPath -EA 0 | % { $c = N $_.PSChildName
+          if ($c -eq $rx) { $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=1} } elseif ($rx.Length -ge 5 -and ($c.StartsWith($rx) -or ($c.Length -ge 5 -and $rx.StartsWith($c)))) { $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=0} } } } } }
+    # MSI registration: without removing it, the app's own installer still thinks it is installed
+    $title = ${q(a.title)}
+    Get-ChildItem 'HKLM:\\SOFTWARE\\Classes\\Installer\\Products','HKCU:\\Software\\Microsoft\\Installer\\Products' -EA 0 | ? { (Get-ItemProperty $_.PSPath -EA 0).ProductName -eq $title } | % {
+      $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=1}
+      $u = "HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Installer\\UserData\\S-1-5-18\\Products\\$($_.PSChildName)"; if (Test-Path $u) { $o += [pscustomobject]@{t='reg';p=(Get-Item $u).PSPath;s=1} } }
+    if ($loc.Length -gt 6) {
+      # App Paths + "Open with" entries pointing into the app folder
+      foreach ($k in 'HKLM:\\SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths','HKCU:\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths') {
+        Get-ChildItem $k -EA 0 | ? { "$((Get-ItemProperty $_.PSPath -EA 0).'(default)')".ToLower().Contains($loc) } | % { $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=1} } }
+      Get-ChildItem 'HKCU:\\Software\\Classes\\Applications' -EA 0 | ? { "$((Get-ItemProperty (Join-Path $_.PSPath 'shell\\open\\command') -EA 0).'(default)')".ToLower().Contains($loc) } | % { $o += [pscustomobject]@{t='reg';p=$_.PSPath;s=1} }
+      # firewall rules for the app's exes
+      $fw = 'HKLM:\\SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy\\FirewallRules'
+      $p = Get-ItemProperty $fw -EA 0; if ($p) { $p.PSObject.Properties | ? { $_.Name -notlike 'PS*' -and "$($_.Value)".ToLower().Contains("app=$loc") } | % { $o += [pscustomobject]@{t='val';p=$fw;n=$_.Name} } }
+    }
     $o | ConvertTo-Json -Compress`);
   for (const r of extra) {
-    if (r.t === 'reg') add(r.p, true, 'reg');
+    if (r.t === 'reg') add(String(r.p).replace(/^Microsoft\.PowerShell\.Core\\Registry::/i, '').replace(/^HKCU:/i, 'HKEY_CURRENT_USER').replace(/^HKLM:/i, 'HKEY_LOCAL_MACHINE'), r.s !== 0, 'reg');
+    else if (r.t === 'val') add(`Firewall rule ${r.n}`, true, 'val', { key: r.p, name: r.n });
     else if (r.t === 'run') add(`${r.p} → ${r.n}`, true, 'run', { key: r.p, name: r.n });
     else if (r.t === 'task') add(`${r.p}${r.n}`, true, 'task', { tpath: r.p, name: r.n });
     else if (r.t === 'svc') add(`Service: ${r.n}`, true, 'svc', { name: r.p });
@@ -325,7 +435,9 @@ async function uninstallApp(a, opts = {}) {
   skipWait = false;
   const steam = steamInfo(a);
   if (steam) await uninstallSteam(a, steam);
-  else if (a.store) {
+  else if (a.portable) {
+    try { await removePath(a.location, true); log(`  🗑 ${a.location}`); } catch (e) { log(`  ✗ ${a.location} (${e.message}, is it open?)`); }
+  } else if (a.store) {
     const r = await ps(`Get-AppxPackage -Name ${q(a.pkg)} | Remove-AppxPackage -EA Continue; if (Get-AppxPackage -Name ${q(a.pkg)}) {'LEFT'} else {'GONE'}`);
     log(r.out.endsWith('GONE') ? '  ✓ removed' : `  ✗ ${r.err.split('\n')[0]}`);
   } else if (a.broken) {
@@ -370,7 +482,7 @@ async function deleteLeftovers(items) {
         const file = path.join(backup, `${Date.now()}-${regPath.replace(/[^a-z0-9]+/gi, '_').slice(-80)}.reg`);
         await ps(`reg export ${q(regPath)} ${q(file)} /y | Out-Null; Remove-Item -LiteralPath ${q('Registry::' + regPath)} -Recurse -Force -EA Stop`);
         if ((await ps(`Test-Path -LiteralPath ${q('Registry::' + regPath)}`)).out === 'True') throw new Error('access denied');
-      } else if (it.type === 'run') {
+      } else if (it.type === 'run' || it.type === 'val') {
         const r = await ps(`Remove-ItemProperty -Path ${q(it.key)} -Name ${q(it.name)} -EA Stop`); if (r.code) throw new Error(r.err.split('\n')[0]);
       } else if (it.type === 'task') {
         const r = await ps(`Unregister-ScheduledTask -TaskPath ${q(it.tpath)} -TaskName ${q(it.name)} -Confirm:$false -EA Stop`); if (r.code) throw new Error(r.err.split('\n')[0]);
@@ -635,6 +747,7 @@ h('scan', async (cat, drive) => {
   if (cat === 'startup') return listStartup();
   if (cat === 'junk') return scanJunk();
   if (cat === 'dupes') return scanDupes(drive);
+  if (cat === 'orphans') return scanOrphans();
   return scanFiles(cat, drive);
 });
 h('icon', async (p) => { if (!p || !fs.existsSync(p)) return null; try { const i = await app.getFileIcon(p, { size: 'large' }); return i.isEmpty() ? null : i.toDataURL(); } catch { return null; } });
@@ -716,8 +829,16 @@ async function devFlags() {
   const sc = argv.indexOf('--scan'); // dev: --scan <cat> <drive> prints what a deck would show
   if (sc > 0) {
     const cat = argv[sc + 1], d = argv[sc + 2];
-    const r = cat === 'dupes' ? await scanDupes(d) : await scanFiles(cat, d);
-    process.stdout.write(JSON.stringify({ n: r.length, top: r.slice(0, 40).map((x) => x.path || x.title) }, null, 1) + '\n');
+    const t = Date.now();
+    const r = cat === 'dupes' ? await scanDupes(d) : cat === 'orphans' ? await scanOrphans() : cat === 'portable' ? await listPortable([]) : await scanFiles(cat, d);
+    process.stdout.write(JSON.stringify({ ms: Date.now() - t, n: r.length, top: r.slice(0, 60).map((x) => `${x.path || x.location || x.title}  ${fmtB(x.size || 0)}`) }, null, 1) + '\n');
+    return true;
+  }
+  const lo = argv.indexOf('--leftovers'); // dev: read-only leftover hunt for an installed app
+  if (lo > 0) {
+    const a = (await listApps()).find((x) => x.title === argv[lo + 1]);
+    const t = Date.now();
+    process.stdout.write(JSON.stringify(a ? { ms: Date.now() - t, loc: a.location, left: (await leftovers(a)).map((l) => `${l.sure ? 'SURE' : 'maybe'} ${l.type}:${l.path}`) } : 'not found', null, 1) + '\n');
     return true;
   }
   if (argv.includes('--make-icon')) { // renders src/logo.svg -> build/icon.png

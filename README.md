@@ -42,6 +42,9 @@ Anything risky (turning off Game Bar, security features) shows a warning first. 
 
 ## What it does
 - **Apps:** normal programs, Steam games and Store apps, biggest first. Silent uninstall when possible (MSI, Inno Setup, NSIS), force-remove for broken uninstallers, then a Revo-style leftover hunt: folders, shortcuts, game saves (My Games, Saved Games, LocalLow), registry keys (backed up first), startup entries, scheduled tasks and services. A stuck uninstaller never freezes the app: there's a "Skip waiting" button.
+- **Deep leftover hunt:** besides folders it checks `Software\<App>` and `Software\<Publisher>\<App>` registry keys (both hives, 32 and 64 bit), MSI registration (so the app's own installer stops thinking it's installed), App Paths, "Open with" entries and firewall rules.
+- **Portable apps:** finds apps sitting in Downloads, Desktop and Documents that Windows doesn't list (no installer), deletes the folder and hunts their AppData leftovers.
+- **Old app leftovers:** folders in AppData, ProgramData and Program Files left by apps you already removed some other way (Settings, deleted by hand). Skips anything used in the last 45 days, anything a running app uses, and anything holding game saves.
 - **Steam games:** removed directly (game folder, manifest, shader cache, workshop files), the same way Bulk Crap Uninstaller's Steam helper does it. No Steam popup, no hang.
 - **Updates:** checks GitHub for a new release when it opens and shows a button if there is one.
 - **Bloatware:** a curated list of preinstalled junk (Candy Crush, TikTok, Clipchamp, News, Copilot…). Nothing Windows needs is ever listed.
