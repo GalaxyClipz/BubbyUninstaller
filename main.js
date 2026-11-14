@@ -21,7 +21,7 @@ const PF86 = env['ProgramFiles(x86)'] || 'C:\\Program Files (x86)';
 const PDATA = env.ProgramData || 'C:\\ProgramData';
 const DAY = 864e5;
 
-const log = (m) => win && win.webContents.send('log', m);
+const log = (m) => { if (win && !win.isDestroyed()) win.webContents.send('log', m); else if (!app.isPackaged) process.stdout.write(m + '\n'); };
 const q = (s) => "'" + String(s).replace(/'/g, "''") + "'";
 const wait = (ms) => new Promise((r) => setTimeout(r, ms));
 
@@ -74,7 +74,12 @@ async function drives() {
 // ---------- fs helpers ----------
 const SKIP = new Set(['node_modules', '.git', 'appdata', '$recycle.bin', 'system volume information', '$windows.~bt', '$windows.~ws',
   'windows', 'program files', 'program files (x86)', 'programdata', 'windowsapps', 'steamlibrary', 'steamapps', 'steam', 'epic games',
-  'xboxgames', 'riot games', 'battle.net', 'gog galaxy', 'ea games', 'ubisoft', 'origin games', 'recovery', 'msocache', 'perflogs']);
+  'xboxgames', 'riot games', 'battle.net', 'gog galaxy', 'ea games', 'ubisoft', 'origin games', 'recovery', 'msocache', 'perflogs',
+  // game + app folders: files in here belong to a game or program, never show them
+  'games', 'my games', 'saved games', 'gog games', 'epicgames', 'rockstar games', 'ubisoft game launcher', 'assets', 'resources', 'textures',
+  'plugins', 'mods', 'presets', 'skins', 'themes', 'icons', 'sprites', 'addons', 'bin', 'lib', 'sdk', 'redist', '_commonredist', 'data']);
+// a folder with these files is a program or game install: skip it and everything under it
+const APP_FILE = /\.(dll|pak|rpf|vpk|assets|bsa|ba2|ucas|utoc|forge|cpk|wad|pck|arc|bundle|gcf|acf|sys|ocx)$/i;
 // live "scanned N files" counter for the loading screen
 let scanned = 0, lastTick = 0;
 function tick(n = 1) {
@@ -92,6 +97,7 @@ async function walk(roots, { exts, maxDepth = 10, cap = 60000 } = {}) {
       let ents;
       try { ents = await fsp.readdir(dir, { withFileTypes: true }); } catch { continue; }
       tick(ents.length);
+      if (ents.some((e) => e.isFile() && APP_FILE.test(e.name))) continue; // program / game folder
       for (const e of ents) {
         visited++;
         if (e.isSymbolicLink()) continue;
@@ -225,7 +231,10 @@ async function leftovers(a) {
   };
   const bases = [PF, PF86, PDATA, ROAM, LOCAL, path.join(LOCAL, 'Programs'), path.join(HOME, 'Documents'), path.join(ROAM, '..', 'LocalLow'),
     path.join(PDATA, 'Microsoft\\Windows\\Start Menu\\Programs'), path.join(ROAM, 'Microsoft\\Windows\\Start Menu\\Programs'),
-    path.join(HOME, 'Desktop'), path.join(env.PUBLIC || 'C:\\Users\\Public', 'Desktop')];
+    path.join(HOME, 'Desktop'), path.join(env.PUBLIC || 'C:\\Users\\Public', 'Desktop'),
+    path.join(HOME, 'Documents', 'My Games'), path.join(HOME, 'Saved Games'), path.join(env.PUBLIC || 'C:\\Users\\Public', 'Documents')];
+  // game saves/settings often sit at LocalLow\<studio>\<game>: check one level deeper there
+  for (const d of await fsp.readdir(path.join(ROAM, '..', 'LocalLow')).catch(() => [])) bases.push(path.join(ROAM, '..', 'LocalLow', d));
   for (const b of bases) {
     let ents; try { ents = await fsp.readdir(b, { withFileTypes: true }); } catch { continue; }
     for (const e of ents) {
@@ -269,9 +278,42 @@ async function leftovers(a) {
   return [...found.values()];
 }
 
+// Steam game: uninstall the way BCU's SteamHelper does it (remove files + manifest ourselves).
+// Launching steam.exe steam://uninstall from an admin app can hang forever, so we never do that.
+function steamInfo(a) {
+  const m = /steam:\/\/uninstall\/(\d+)/i.exec(a.uninstall || '');
+  if (!m) return null;
+  const loc = (a.location || '').replace(/\\$/, '');
+  const lib = /\\steamapps\\common\\[^\\]+$/i.test(loc) ? loc.replace(/\\common\\[^\\]+$/i, '') : '';
+  return { id: m[1], loc, lib };
+}
+async function uninstallSteam(a, s) {
+  const p = (...x) => path.join(s.lib, ...x);
+  const targets = s.lib ? [s.loc, p(`appmanifest_${s.id}.acf`), p('shadercache', s.id), p('workshop', 'content', s.id), p(`workshop\\appworkshop_${s.id}.acf`),
+    p('compatdata', s.id), p('downloading', s.id), p('temp', s.id)] : [];
+  if (!s.lib) { log('  ✗ could not find the Steam library folder'); return false; }
+  let ok = true;
+  for (const t of targets) {
+    if (!fs.existsSync(t)) continue;
+    try { await fsp.rm(t, { recursive: true, force: true, maxRetries: 3 }); log(`  🗑 ${t}`); } catch (e) { ok = false; log(`  ✗ ${t} (${e.message})`); }
+  }
+  const r = await ps(`Remove-Item -LiteralPath ${q(a.id)} -Recurse -Force -EA 0; Test-Path -LiteralPath ${q(a.id)}`);
+  if (r.out === 'True') log('  ✗ Steam entry in Add/Remove Programs stays (needs admin). Steam drops it on next restart.');
+  log(ok ? '  ✓ game removed. Steam shows it as not installed.' : '  ✗ some files in use. Close the game and Steam, then try again.');
+  return ok;
+}
+// NSIS uninstallers take /S for silent. Check the exe for the Nullsoft marker.
+async function isNsis(exe) {
+  try { const fd = await fsp.open(exe, 'r'); const b = Buffer.alloc(4 << 20); const { bytesRead } = await fd.read(b, 0, b.length, 0); await fd.close();
+    return b.subarray(0, bytesRead).includes('Nullsoft'); } catch { return false; }
+}
+let skipWait = false;
 async function uninstallApp(a, opts = {}) {
   log(`▶ Uninstalling ${a.title}…`);
-  if (a.store) {
+  skipWait = false;
+  const steam = steamInfo(a);
+  if (steam) await uninstallSteam(a, steam);
+  else if (a.store) {
     const r = await ps(`Get-AppxPackage -Name ${q(a.pkg)} | Remove-AppxPackage -EA Continue; if (Get-AppxPackage -Name ${q(a.pkg)}) {'LEFT'} else {'GONE'}`);
     log(r.out.endsWith('GONE') ? '  ✓ removed' : `  ✗ ${r.err.split('\n')[0]}`);
   } else if (a.broken) {
@@ -281,12 +323,24 @@ async function uninstallApp(a, opts = {}) {
     const m = /msiexec.*?(\{[0-9A-F-]{36}\})/i.exec(a.uninstall);
     if (m) cmd = `msiexec.exe /x ${m[1]} ${opts.silent ? '/qn' : '/qb'} /norestart`;
     else if (opts.silent && !a.quiet && /unins\d{3}\.exe/i.test(cmd)) cmd += ' /VERYSILENT /SUPPRESSMSGBOXES /NORESTART';
+    else if (opts.silent && !a.quiet && (await isNsis(exeOf(cmd)))) cmd += ' /S';
     else if (!opts.silent) cmd = a.uninstall;
-    await new Promise((res) => { const p = spawn(cmd, { shell: true }); p.on('close', res); p.on('error', res); });
-    for (let i = 0; i < 90; i++) { // some uninstallers fork and exit; wait for key to vanish
-      if ((await ps(`Test-Path -LiteralPath ${q(a.id)}`)).out !== 'True') break;
-      await wait(2000);
+    // Never wait forever: done when the process exits AND/OR the app's registry entry is gone.
+    // Max 15 min, and the user can hit "Skip waiting" any time.
+    let exitAt = 0;
+    const child = spawn(cmd, { shell: true, windowsHide: false });
+    child.on('close', () => { exitAt = exitAt || Date.now(); }); child.on('error', () => { exitAt = exitAt || Date.now(); });
+    const t0 = Date.now();
+    let goneAt = 0;
+    while (!skipWait && Date.now() - t0 < 15 * 60e3) {
+      await wait(1500);
+      if (!goneAt && (await ps(`Test-Path -LiteralPath ${q(a.id)}`)).out !== 'True') goneAt = Date.now();
+      if (goneAt && (exitAt || Date.now() - goneAt > 8000)) break; // entry gone = uninstall finished
+      if (exitAt && Date.now() - exitAt > 60e3) break; // uninstaller closed but entry stays (forked one or cancelled)
     }
+    if (skipWait) log('  ⏭ stopped waiting, looking for leftovers');
+    const still = (await ps(`Test-Path -LiteralPath ${q(a.id)}`)).out === 'True';
+    if (still) log('  ⚠ uninstaller didn\'t finish (cancelled?). Leftovers below may include the app itself.');
   }
   const left = await leftovers(a);
   log(`  ✓ ${a.title} done. ${left.length} leftovers found.`);
@@ -360,7 +414,9 @@ async function partHash(p, size) {
 }
 async function scanDupes(drive) {
   const r = rootsFor(drive);
-  const all = (await walk(r ? r.dupes : [drive], { maxDepth: 12 })).filter((f) => f.size >= 1e6);
+  // only your own stuff: media, docs, archives, installers. Never game or app data.
+  const exts = new Set(`${EXT.videos} ${EXT.pictures} ${EXT.documents} mp3 wav flac m4a aac ogg zip rar 7z iso exe msi`.split(' '));
+  const all = (await walk(r ? r.dupes : [drive], { maxDepth: 12, exts })).filter((f) => f.size >= 1e6);
   const bySize = new Map();
   for (const f of all) (bySize.get(f.size) || bySize.set(f.size, []).get(f.size)).push(f);
   const out = [];
@@ -571,6 +627,20 @@ h('scan', async (cat, drive) => {
 });
 h('icon', async (p) => { if (!p || !fs.existsSync(p)) return null; try { const i = await app.getFileIcon(p, { size: 'large' }); return i.isEmpty() ? null : i.toDataURL(); } catch { return null; } });
 h('uninstall', uninstallApp);
+h('skipWait', () => { skipWait = true; });
+// update check: asks GitHub for the newest release, sends nothing about you
+h('checkUpdate', async () => {
+  try {
+    const r = await fetch('https://api.github.com/repos/GalaxyClipz/BubbyUninstaller/releases/latest', { headers: { 'User-Agent': 'BubbyUninstaller' }, signal: AbortSignal.timeout(8000) });
+    if (!r.ok) return null;
+    const j = await r.json();
+    const v = (s) => String(s || '').replace(/^v/, '').split('.').map(Number);
+    const [a, b] = [v(j.tag_name), v(app.getVersion())];
+    for (let i = 0; i < 3; i++) { if ((a[i] || 0) > (b[i] || 0)) return { version: j.tag_name.replace(/^v/, ''), url: j.html_url }; if ((a[i] || 0) < (b[i] || 0)) break; }
+    return null;
+  } catch { return null; }
+});
+h('openUrl', (u) => { if (/^https:\/\/github\.com\/GalaxyClipz\/BubbyUninstaller\//.test(u)) shell.openExternal(u); });
 h('deleteLeftovers', deleteLeftovers);
 h('deleteFiles', async (items, permanent = true) => {
   let ok = 0, failed = 0, freed = 0;
@@ -621,6 +691,21 @@ async function devFlags() {
       dupes: (await scanDupes(SYSDRIVE)).length, opt: (await listTweaks('opt')).map((x) => `${x.id}:${x.applied}`),
       debloat: (await listTweaks('debloat')).filter((x) => x.applied).length, startup: (await listStartup()).map((s) => s.title), junk: (await scanJunk()).map((j) => `${j.title} ${fmtB(j.size)}`), ms: Date.now() - t };
     process.stdout.write(JSON.stringify(r, null, 1) + '\n');
+    return true;
+  }
+  const ui = argv.indexOf('--uninstall'); // dev: --uninstall "<exact app title>" runs a real uninstall, prints leftovers (not deleted)
+  if (ui > 0) {
+    const a = (await listApps()).find((x) => x.title === argv[ui + 1]);
+    if (!a) { process.stdout.write('app not found\n'); return true; }
+    const t = Date.now(); const left = await uninstallApp(a, { silent: true });
+    process.stdout.write(JSON.stringify({ ms: Date.now() - t, left: left.map((l) => `${l.type}:${l.path}`) }, null, 1) + '\n');
+    return true;
+  }
+  const sc = argv.indexOf('--scan'); // dev: --scan <cat> <drive> prints what a deck would show
+  if (sc > 0) {
+    const cat = argv[sc + 1], d = argv[sc + 2];
+    const r = cat === 'dupes' ? await scanDupes(d) : await scanFiles(cat, d);
+    process.stdout.write(JSON.stringify({ n: r.length, top: r.slice(0, 40).map((x) => x.path || x.title) }, null, 1) + '\n');
     return true;
   }
   if (argv.includes('--make-icon')) { // renders src/logo.svg -> build/icon.png

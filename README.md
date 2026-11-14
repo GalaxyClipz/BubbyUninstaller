@@ -41,13 +41,15 @@ Works on Windows 10 and 11 (64-bit).
 Anything risky (turning off Game Bar, security features) shows a warning first. Restore points are optional.
 
 ## What it does
-- **Apps:** normal programs and Store apps, biggest first. Silent uninstall when possible, force-remove for broken uninstallers, then a leftover hunt: folders, shortcuts, registry keys (backed up first), startup entries, scheduled tasks and services.
+- **Apps:** normal programs, Steam games and Store apps, biggest first. Silent uninstall when possible (MSI, Inno Setup, NSIS), force-remove for broken uninstallers, then a Revo-style leftover hunt: folders, shortcuts, game saves (My Games, Saved Games, LocalLow), registry keys (backed up first), startup entries, scheduled tasks and services. A stuck uninstaller never freezes the app: there's a "Skip waiting" button.
+- **Steam games:** removed directly (game folder, manifest, shader cache, workshop files), the same way Bulk Crap Uninstaller's Steam helper does it. No Steam popup, no hang.
+- **Updates:** checks GitHub for a new release when it opens and shows a button if there is one.
 - **Bloatware:** a curated list of preinstalled junk (Candy Crush, TikTok, Clipchamp, News, Copilot…). Nothing Windows needs is ever listed.
 - **Debloat Windows:** kill Start menu and lock screen ads, the advertising ID, Bing in Start, Copilot, Recall, telemetry, Widgets, Explorer ads, OneDrive.
 - **Optimize:** 30 boosts with honest labels (Hone / Atlas / Winhance-style): Game Mode, GPU scheduling, windowed game optimizations, game priority, telemetry tasks, useless services, mouse acceleration, USB power saving, core parking, timer resolution, memory compression, Nagle, network throttling, dynamic tick, VBS, Spectre fixes and more. Every boost can be turned back off.
 - **Startup apps:** the same switch Task Manager uses, fully undoable.
 - **Junk & Update files:** temp, browser and app caches, crash and memory dumps, old logs, old driver installers, old Discord / Slack versions, dev caches, Steam leftovers, Windows Update downloads, DISM component cleanup, Delivery Optimization cache, Windows.old and the Recycle Bin.
-- **Files:** videos, pictures, documents, downloads, huge files and duplicates with previews. Tiny files get bundled into one card so you're not swiping forever. Pick any drive.
+- **Files:** videos, pictures, documents, downloads, huge files and duplicates with previews. Tiny files get bundled into one card so you're not swiping forever. Pick any drive. Game and app folders are skipped (any folder with .dll / .pak / .rpf etc.), so you only see your own stuff.
 - **Feels like a console:** big tiles, D-pad navigation, Xbox / PlayStation / Switch Pro / generic controllers, and a chill lo-fi loop made live in the app (no music files).
 
 <p align="center">
@@ -73,6 +75,8 @@ npm run dist       # build dist/BubbyUninstaller-Setup-<version>.exe
 
 Safety rules live in `safe()` in `main.js`: it refuses to delete drive roots, user folders, Program Files roots and anything inside `C:\Windows` except temp / update / dump / log folders.
 
-Dev flags: `npx electron . --selftest` prints a read-only scan of your PC. `npx electron . --shot <folder>` saves screenshots of each screen (it never presses Go).
+Thanks: the Steam uninstall and leftover-matching ideas come from [Bulk Crap Uninstaller](https://github.com/Klocman/Bulk-Crap-Uninstaller) (Apache-2.0). Revo Uninstaller is closed source, so only its behavior was copied, not its code.
+
+Dev flags: `npx electron . --selftest` prints a read-only scan of your PC. `--scan <cat> <drive>` prints what a deck would show. `--uninstall "<app title>"` runs a REAL uninstall and prints leftovers (it doesn't delete them). `npx electron . --shot <folder>` saves screenshots of each screen (it never presses Go).
 
 Build gotchas on Windows: if the project path is very long, NSIS fails with *"could not open file … StdUtils.nsh"*. Build from a short path like `C:\dev\BubbyUninstaller`. If your `cmd.exe` has an AutoRun that prints text (like fastfetch), `npm run dist` fails with *"No JSON content found in output"*.

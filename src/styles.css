@@ -41,6 +41,7 @@ h2 { font: 600 20px var(--head); margin: 0; }
 .bar { flex: 1; height: 9px; border-radius: 99px; background: var(--panel2); overflow: hidden; }
 .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent), var(--accent2)); border-radius: 99px; transition: width .4s; }
 .credit { margin-top: 12px; color: var(--dim); font-size: 12.5px; } .credit b { color: var(--accent2); }
+.btn.update { margin-top: 10px; border-color: var(--ok, #3ddc84); color: var(--ok, #3ddc84); font-size: 13px; }
 .link { color: var(--dim); text-decoration: underline; padding: 0; } .link:hover { color: var(--text); }
 .tiles { display: grid; grid-template-columns: repeat(auto-fill, minmax(190px, 1fr)); gap: 12px; }
 .tile { text-align: left; padding: 16px; border-radius: 16px; background: linear-gradient(160deg, var(--panel2), var(--panel)); border: 1px solid var(--line);

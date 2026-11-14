@@ -106,6 +106,15 @@ function ask(title, text, okLabel = 'Do it anyway') {
 }
 
 // ---------- home ----------
+// checks GitHub once per launch for a newer release
+const updateP = api.checkUpdate().catch(() => null);
+async function showUpdate() {
+  const u = await updateP;
+  const c = $('.credit');
+  if (!u || !c || $('#upd')) return;
+  c.insertAdjacentHTML('afterend', `<button class="btn update" id="upd">⬇ Update ${esc(u.version)} is out · get it</button>`);
+  $('#upd').onclick = () => api.openUrl(u.url);
+}
 async function home() {
   screen = 'home'; S = null;
   info = await api.info();
@@ -134,6 +143,7 @@ async function home() {
   </section>`;
   $$('.tile').forEach((t) => (t.onclick = () => openDeck(t.dataset.cat)));
   $('#gh').onclick = () => api.github();
+  showUpdate();
   $('.tile').focus();
   hints([['←↑→↓', 'move', 'D-pad'], ['Enter', 'open', 'A']]);
   if (!store.get('tipSeen', false)) tip();
@@ -446,7 +456,16 @@ async function run(items, opts) {
     const it = items[i];
     prog(i, items.length, `${cap(actLabel(it))}: ${it.title}  (${i + 1}/${items.length})`);
     try {
-      if (it.kind === 'app') { left.push(...(await api.uninstall(it, { silent: opts.silent }))); res.uninstalled++; }
+      if (it.kind === 'app') {
+        // uninstallers can hang (popup behind window, cancelled). After 20s offer a way out.
+        const tmr = setTimeout(() => {
+          const n = $('#now'); if (!n || $('#skipw')) return;
+          n.insertAdjacentHTML('afterend', `<p class="sub">Stuck? The uninstaller window may be behind this one. <button class="btn" id="skipw">Skip waiting</button></p>`);
+          $('#skipw').onclick = () => { api.skipWait(); $('#skipw').disabled = true; $('#skipw').textContent = 'Checking leftovers…'; };
+        }, 20000);
+        try { left.push(...(await api.uninstall(it, { silent: opts.silent }))); res.uninstalled++; }
+        finally { clearTimeout(tmr); $('#skipw')?.parentElement.remove(); }
+      }
       else if (it.kind === 'bloat') (await api.removeBloat(it)) ? res.uninstalled++ : res.failed++;
       else if (it.kind === 'tweak') { if (await api.tweak(it.id, false)) { res.applied++; res.needRestart = true; } else res.failed++; }
       else if (it.kind === 'startup') (await api.setStartup(it, false)) ? res.applied++ : res.failed++;

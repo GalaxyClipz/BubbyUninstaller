@@ -6,6 +6,7 @@ contextBridge.exposeInMainWorld('bubby', {
   cleanJunk: call('cleanJunk'), removeBloat: call('removeBloat'), tweak: call('tweak'), setStartup: call('setStartup'),
   restorePoint: call('restorePoint'), restartExplorer: call('restartExplorer'),
   reveal: call('reveal'), open: call('open'), elevate: call('elevate'), github: call('github'),
+  skipWait: call('skipWait'), checkUpdate: call('checkUpdate'), openUrl: call('openUrl'),
   onLog: (fn) => ipcRenderer.on('log', (_e, m) => fn(m)),
   onProgress: (fn) => ipcRenderer.on('progress', (_e, n) => fn(n)),
 });
