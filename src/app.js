@@ -147,6 +147,7 @@ async function home() {
   $('.tile').focus();
   hints([['←↑→↓', 'move', 'D-pad'], ['Enter', 'open', 'A']]);
   if (!store.get('tipSeen', false)) tip();
+  else if (!store.get('warnSeen', false)) careful();
 }
 function tip() {
   const el = document.createElement('div');
@@ -158,8 +159,27 @@ function tip() {
     <p class="sub">Keys ← → work too, and any controller. New here? Try <b>Smart Clean</b> first.</p><button class="btn primary" id="tipok">Got it</button></div>`;
   document.body.appendChild(el);
   $('#tipok').focus();
-  $('#tipok').onclick = () => { store.set('tipSeen', true); el.remove(); $('.tile')?.focus(); };
+  $('#tipok').onclick = () => { store.set('tipSeen', true); el.remove(); if (!store.get('warnSeen', false)) careful(); else $('.tile')?.focus(); };
 }
+// "Read first" pill + shown once on first ever launch
+function careful() {
+  if ($('.careful-modal')) return;
+  const el = document.createElement('div');
+  el.className = 'tip modal careful-modal';
+  el.innerHTML = `<div class="tip-card warn-card"><div class="warn-ico">${svg('warn')}</div><h2>Look before you swipe</h2>
+    <ul class="careful-list">
+      <li>Deleted stuff skips the Recycle Bin by default. <b>Once it's gone, it's gone.</b></li>
+      <li>Only swipe left on things you know. <b>Not sure? Swipe right</b> to keep it.</li>
+      <li>Want a safety net? Tick <b>Send to Recycle Bin</b> or <b>restore point</b> on the last screen.</li>
+      <li>Boosts are safe: every one can be turned back off.</li>
+    </ul>
+    <div class="row-btns"><button class="btn primary" id="c-ok">Got it, I'll be careful</button></div></div>`;
+  document.body.appendChild(el);
+  const close = () => { store.set('warnSeen', true); el.remove(); $('.tile')?.focus(); };
+  $('#c-ok', el).onclick = close;
+  $('#c-ok', el).focus();
+}
+$('#careful').onclick = careful;
 
 // ---------- deck ----------
 const SMART_SKIP = ['winold', 'recycle', 'installers', 'tinydl', 'winsxs'];
@@ -552,7 +572,7 @@ function focusMove(step) { // generic tab-like move for review / popups with a c
 }
 function key(k) {
   if ($('.tip')) {
-    if (k === 'Escape') { ($('#m-no') || $('#tipok'))?.click(); return true; }
+    if (k === 'Escape') { ($('#m-no') || $('#c-ok') || $('#tipok'))?.click(); return true; }
     if (k === 'ArrowLeft' || k === 'ArrowUp') return focusMove(-1), true;
     if (k === 'ArrowRight' || k === 'ArrowDown') return focusMove(1), true;
     return false; // Enter = native click on focused button

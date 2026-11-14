@@ -289,6 +289,18 @@ function steamInfo(a) {
 }
 async function uninstallSteam(a, s) {
   const p = (...x) => path.join(s.lib, ...x);
+  const manifest = s.lib && p(`appmanifest_${s.id}.acf`);
+  // 1) let Steam do it so Steam's library knows right away. We open the steam:// link (no child process to hang on)
+  //    and watch for Steam to remove the manifest. 2) Whatever is left (or if Steam is closed / user skips) we delete ourselves.
+  const steamRunning = (await ps('[bool](Get-Process steam -EA 0)')).out === 'True';
+  if (steamRunning && manifest && fs.existsSync(manifest)) {
+    log('  Steam will ask to confirm: click "Uninstall" in the Steam window.');
+    shell.openExternal(`steam://uninstall/${s.id}`).catch(() => {});
+    const t0 = Date.now();
+    while (!skipWait && fs.existsSync(manifest) && Date.now() - t0 < 3 * 60e3) await wait(1000);
+    if (!fs.existsSync(manifest)) { log('  ✓ Steam removed it'); await wait(3000); } // let Steam finish deleting files
+    else log('  Steam didn\'t confirm, removing the files directly (Steam updates its list next time it starts)');
+  }
   const targets = s.lib ? [s.loc, p(`appmanifest_${s.id}.acf`), p('shadercache', s.id), p('workshop', 'content', s.id), p(`workshop\\appworkshop_${s.id}.acf`),
     p('compatdata', s.id), p('downloading', s.id), p('temp', s.id)] : [];
   if (!s.lib) { log('  ✗ could not find the Steam library folder'); return false; }
@@ -298,8 +310,8 @@ async function uninstallSteam(a, s) {
     try { await fsp.rm(t, { recursive: true, force: true, maxRetries: 3 }); log(`  🗑 ${t}`); } catch (e) { ok = false; log(`  ✗ ${t} (${e.message})`); }
   }
   const r = await ps(`Remove-Item -LiteralPath ${q(a.id)} -Recurse -Force -EA 0; Test-Path -LiteralPath ${q(a.id)}`);
-  if (r.out === 'True') log('  ✗ Steam entry in Add/Remove Programs stays (needs admin). Steam drops it on next restart.');
-  log(ok ? '  ✓ game removed. Steam shows it as not installed.' : '  ✗ some files in use. Close the game and Steam, then try again.');
+  if (r.out === 'True') log('  Steam entry in Add/Remove Programs stays (needs admin). Steam drops it on next restart.');
+  log(ok ? '  ✓ game files gone' : '  ✗ some files in use. Close the game, then try again.');
   return ok;
 }
 // NSIS uninstallers take /S for silent. Check the exe for the Nullsoft marker.
@@ -741,7 +753,7 @@ app.whenReady().then(async () => {
     const js = (c) => win.webContents.executeJavaScript(`try { (()=>{ ${c} })() } catch (e) { console.error(e) }; 0`).catch(() => {}); // never wait on page promises
     setTimeout(() => app.quit(), 120000); // safety net
     win.webContents.once('did-finish-load', async () => {
-      await wait(1500); await snap('tip.png'); await js("document.querySelector('#tipok')?.click()"); await wait(300); await snap('home.png');
+      await wait(1500); await snap('tip.png'); await js("document.querySelector('#tipok')?.click()"); await wait(300); await js("document.querySelector('#c-ok') || document.querySelector('#careful').click()"); await wait(400); await snap('careful.png'); await js("document.querySelector('#c-ok')?.click()"); await wait(300); await snap('home.png');
       // nothing below runs a real action: only swipes + screens, never the Go button
       js("openDeck('junk')"); await wait(700); await snap('loading.png'); await wait(12000); await snap('deck-junk.png');
       await js("openDeck('opt')"); await wait(4000); await js("swipe('right')"); await wait(400); await js("swipe('left')"); await wait(400);
