@@ -1,0 +1,26 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 256 256" width="256" height="256">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#8b5cff"/>
+      <stop offset="1" stop-color="#22d3ee"/>
+    </linearGradient>
+    <linearGradient id="card" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff"/>
+      <stop offset="1" stop-color="#e6ecff"/>
+    </linearGradient>
+  </defs>
+  <rect x="8" y="8" width="240" height="240" rx="64" fill="url(#bg)"/>
+  <!-- card swiped away (left, red) -->
+  <g transform="rotate(-20 128 140)" opacity=".55">
+    <rect x="64" y="56" width="104" height="140" rx="22" fill="#ff4d6d"/>
+  </g>
+  <!-- front card with B -->
+  <g transform="rotate(8 128 128)">
+    <rect x="80" y="52" width="112" height="150" rx="24" fill="url(#card)"/>
+    <path d="M114 88 h28 a20 20 0 0 1 0 40 h-28 z M114 128 h32 a22 22 0 0 1 0 44 h-32 z"
+          fill="none" stroke="#5b3fe0" stroke-width="15" stroke-linejoin="round"/>
+  </g>
+  <!-- swipe arrow -->
+  <path d="M40 210 q30 14 62 0" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" opacity=".9"/>
+  <path d="M40 210 l12 -12 M40 210 l15 8" fill="none" stroke="#fff" stroke-width="9" stroke-linecap="round" opacity=".9"/>
+</svg>

@@ -1,0 +1,48 @@
+{
+  "name": "bubbyuninstaller",
+  "productName": "BubbyUninstaller",
+  "version": "1.0.0",
+  "description": "Swipe-to-clean uninstaller, debloater and optimizer for Windows. Made by BubbyJr.",
+  "author": "BubbyJr",
+  "homepage": "https://github.com/GalaxyClipz/BubbyUninstaller",
+  "main": "main.js",
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder --win nsis"
+  },
+  "license": "MIT",
+  "type": "commonjs",
+  "devDependencies": {
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0"
+  },
+  "build": {
+    "appId": "com.bubbyjr.bubbyuninstaller",
+    "productName": "BubbyUninstaller",
+    "copyright": "Made by BubbyJr",
+    "files": [
+      "main.js",
+      "preload.js",
+      "lib/**",
+      "src/**",
+      "build/icon.png"
+    ],
+    "directories": {
+      "output": "dist",
+      "buildResources": "build"
+    },
+    "win": {
+      "target": "nsis",
+      "icon": "build/icon.png",
+      "requestedExecutionLevel": "requireAdministrator",
+      "artifactName": "BubbyUninstaller-Setup-${version}.exe"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "shortcutName": "BubbyUninstaller",
+      "uninstallDisplayName": "BubbyUninstaller"
+    }
+  }
+}
