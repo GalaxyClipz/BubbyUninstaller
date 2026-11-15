@@ -704,8 +704,15 @@ async function applyTweak(id, undo) {
   log(`▶ ${undo ? 'Undo' : 'Apply'}: ${t.title}`);
   const s = undo ? [...(t.undo ? t.undo.map(regSet) : t.reg.map(regDel)), t.undoPs || ''] : [...t.reg.map(regSet), t.ps || ''];
   const r = await ps(s.join('\n'));
-  log(r.code === 0 ? '  ✓ done' : `  ✗ ${r.err.split('\n')[0]}`);
-  return r.code === 0;
+  if (r.code !== 0) { log(`  ✗ ${r.err.split('\n')[0]}`); return false; }
+  // double check it really stuck, so the deck never shows a boost as "off" that we said is on (or the other way)
+  const chk = t.check || (t.reg.length ? t.reg.map(regChk).join(' -and ') : '');
+  if (chk) {
+    const on = (await ps(`[bool](${chk})`)).out === 'True';
+    if (on === !!undo) { log(`  ✗ Windows didn't keep this change${r.err ? ': ' + r.err.split('\n')[0] : ''}`); return false; }
+  }
+  log('  ✓ done');
+  return true;
 }
 
 // ---------- startup apps (same on/off switch Task Manager uses, fully undoable) ----------

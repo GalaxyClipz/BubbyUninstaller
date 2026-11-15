@@ -528,7 +528,6 @@ function leftoversScreen(left, res) {
   hints([['Space', 'tick / untick', 'A']]);
 }
 
-let homeTimer;
 function done(r) {
   screen = 'done';
   const parts = [];
@@ -546,13 +545,10 @@ function done(r) {
     ${r.needRestart ? '<div class="sub">Some changes kick in after a restart.</div>' : ''}
     <div style="display:flex;gap:12px">${r.needRestart ? '<button class="btn" id="rx">Restart Explorer now</button>' : ''}<button class="btn primary" id="home">Back home</button></div>
   </div>${logBuf ? `<details id="det"><summary>What happened</summary><div class="console" style="height:30vh">${esc(logBuf)}</div></details>` : ''}</section>`;
-  let n = 6;
-  const tickHome = () => { const b = $('#home'); if (!b) return; b.textContent = `Back home (${n})`; if (n-- <= 0) home(); else homeTimer = setTimeout(tickHome, 1000); };
-  const stop = () => { clearTimeout(homeTimer); const b = $('#home'); if (b) b.textContent = 'Back home'; };
-  $('#home').onclick = () => { clearTimeout(homeTimer); home(); }; $('#home').focus();
-  const rx = $('#rx'); if (rx) rx.onclick = () => { stop(); api.restartExplorer(); };
-  const det = $('#det'); if (det) det.ontoggle = stop;
-  tickHome();
+  // no auto-return: you go home when you're ready
+  $('#home').textContent = 'Back home';
+  $('#home').onclick = () => home(); $('#home').focus();
+  const rx = $('#rx'); if (rx) rx.onclick = () => { rx.disabled = true; rx.textContent = 'Explorer restarted'; api.restartExplorer(); };
   hints([['Enter', 'home', 'A']]);
 }
 
